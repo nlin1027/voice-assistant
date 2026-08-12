@@ -47,6 +47,14 @@ class TaskStore:
             (status, summary, raw_output, error, cost_usd, time.time(), task_id))
             self.conn.commit()
 
+    def mark_running(self, task_id):
+        with self.lock:
+            self.conn.execute("""
+                UPDATE tasks SET status='running', started_at=? WHERE id=?
+            """,
+            (time.time(), task_id))
+            self.conn.commit()
+         
     def get(self, task_id):
         with self.lock:
             self.conn.row_factory = sqlite3.Row

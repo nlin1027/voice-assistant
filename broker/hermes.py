@@ -3,6 +3,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from .slots import SlotPool
 
 HERMES = r"C:\Users\ignsock\AppData\Local\hermes\hermes-agent\venv\Scripts\hermes.exe"
 prompt_template = """{objective}
@@ -49,7 +50,7 @@ class HermesResult:
     cost_usd: float | None
     returncode: int
 
-async def run_hermes(objective, workdir, risk, timeout_s=1800):
+async def run_hermes(objective, workdir, risk, timeout_s=1800, profile=None):
     workdir = Path(workdir)
     prompt = prompt_template.format(objective=objective)
     usage_path = workdir / "usage.json"
@@ -60,6 +61,8 @@ async def run_hermes(objective, workdir, risk, timeout_s=1800):
         "TERMINAL_CWD": str(workdir),
         **risk_profiles[risk]
     }
+    if profile:
+        child_env["HERMES_HOME"] = str(SlotPool.home(profile))
         
     proc = await asyncio.create_subprocess_exec(
         HERMES, "-z", prompt,
@@ -76,14 +79,16 @@ async def run_hermes(objective, workdir, risk, timeout_s=1800):
     except asyncio.TimeoutError:
         proc.terminate()
         await proc.wait()
+        raise TimeoutError(f"hermes didn't finish within {timeout_s}s")
+    finally:
         try:
             await terminate_containers(workdir)
-        except Exception:
+        except:
             pass
-        raise TimeoutError(f"hermes didn't finish within {timeout_s}s")
 
     stdout = stdout.decode("utf-8", errors="replace").strip()
     stderr = stderr.decode("utf-8", errors="replace").strip()
+    (workdir / "hermes.stderr.log").write_text(stderr, encoding="utf-8")
 
     if proc.returncode != 0:
         raise RuntimeError(f"hermes exited {proc.returncode}: {stderr[-2000:]}")
