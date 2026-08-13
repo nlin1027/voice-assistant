@@ -21,11 +21,17 @@ Run the bot using::
 """
 
 import os
+#25 + 26 i added
+import sys 
+from pathlib import Path
 
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.adapters.schemas.direct_function import tool_options
+from pipecat.evals.transport import EvalTransportParams
 from pipecat.frames.frames import LLMRunFrame
+from pipecat.frames.frames import FunctionCallResultProperties
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -43,6 +49,25 @@ from pipecat.workers.runner import WorkerRunner
 
 load_dotenv(override=True)
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
+from broker.broker import TaskBroker
+broker = TaskBroker(root=REPO_ROOT / "hermes_tasks", db_path=REPO_ROOT / "broker" / "tasks.db")
+
+@tool_options(cancel_on_interruption=False)
+async def run_hermes_task(params, objective, task_type, risk):
+    broker = params.app_resources
+    task_id = await broker.create(objective, task_type, risk)
+    await params.result_callback(
+        {"status": "started", "task_id": task_id}, 
+        properties=FunctionCallResultProperties(is_final=False)
+    )
+    try:
+        row = await broker.run(task_id)
+    except Exception as e:
+        await params.result_callback({"status": "failed", "error": str(e)})
+        return
+    await params.result_callback({"status": row["status"], "summary": row["summary"]})
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     """Run the voice bot for this session.
@@ -76,7 +101,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         ),
     )
 
-    context = LLMContext()
+    context = LLMContext(tools=[run_hermes_task])
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer()),
@@ -101,6 +126,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             enable_metrics=True,
             enable_usage_metrics=True,
         ),
+        app_resources=broker,
         observers=[],
     )
 
@@ -134,6 +160,10 @@ async def bot(runner_args: RunnerArguments):
         "webrtc": lambda: TransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
+        ),
+        "eval": lambda: EvalTransportParams(
+            audio_in_enabled=True, 
+            audio_out_enabled=True
         ),
     }
 
