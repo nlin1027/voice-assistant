@@ -21,7 +21,6 @@ Run the bot using::
 """
 
 import os
-#25 + 26 i added
 import sys 
 from pathlib import Path
 
@@ -44,6 +43,7 @@ from pipecat.runner.utils import create_transport
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.openai.responses.llm import OpenAIResponsesHttpLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.workers.runner import WorkerRunner
 
@@ -52,10 +52,18 @@ load_dotenv(override=True)
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 from broker.broker import TaskBroker
-broker = TaskBroker(root=REPO_ROOT / "hermes_tasks", db_path=REPO_ROOT / "broker" / "tasks.db")
+broker = TaskBroker(root=REPO_ROOT / "hermes-tasks", db_path=REPO_ROOT / "broker" / "tasks.db")
 
 @tool_options(cancel_on_interruption=False)
 async def run_hermes_task(params, objective, task_type, risk):
+    """Dispatch a background Hermes task.
+
+    Args:
+        objective: What to accomplish.
+        task_type: A short label for the kind of task.
+        risk: Must be exactly one of "read_only", "reversible", or "destructive" —
+            no other value is valid.
+    """
     broker = params.app_resources
     task_id = await broker.create(objective, task_type, risk)
     await params.result_callback(
@@ -93,13 +101,21 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     )
 
     # LLM service
-    llm = OpenAILLMService(
+    """llm = OpenAILLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAILLMService.Settings(
+            model=os.getenv("OPENAI_MODEL", "gpt-5.6-luna"),
+            system_instruction="You are a helpful assistant in a voice conversation. Your responses will be spoken aloud, so avoid emojis, bullet points, or other formatting that can't be spoken. Respond to what the user said in a creative, helpful, and brief way.",
+        ),
+    )"""
+    llm = OpenAIResponsesHttpLLMService(
+        api_key=os.getenv("OPENAI_API_KEY"),
+        settings=OpenAIResponsesHttpLLMService.Settings(
             model=os.getenv("OPENAI_MODEL", "gpt-4.1"),
             system_instruction="You are a helpful assistant in a voice conversation. Your responses will be spoken aloud, so avoid emojis, bullet points, or other formatting that can't be spoken. Respond to what the user said in a creative, helpful, and brief way.",
         ),
     )
+    
 
     context = LLMContext(tools=[run_hermes_task])
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
