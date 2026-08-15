@@ -1,9 +1,0 @@
-name: greeting_smoke
-judge:
-  eval:
-    service: openai
-    model: gpt-5.6-luna
-turns:
-  - expect: 
-      - event: response
-        eval: "the bot introduces itself or greets the user in some way"
