@@ -13,7 +13,7 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("objective", help="What you want Hermes to do")
     parser.add_argument("--type", default="research", choices=["research", "code", "file_op", "lookup", "system"])
-    parser.add_argument("--risk", default="read_only", choices=["read_only", "reversible", "destructive"])
+    parser.add_argument("--risk", default="read_only", choices=["read_only", "edit"])
     args = parser.parse_args()
 
     broker = TaskBroker(root=TASKS_ROOT, db_path=DB_PATH)

@@ -61,7 +61,7 @@ async def run_hermes_task(params, objective, task_type, risk):
     Args:
         objective: What to accomplish.
         task_type: A short label for the kind of task.
-        risk: Must be exactly one of "read_only", "reversible", or "destructive" —
+        risk: Must be exactly one of "read_only" or "edit" —
             no other value is valid.
     """
 

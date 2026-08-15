@@ -4,12 +4,14 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from .slots import SlotPool
+from .approved_paths import APPROVED_DIRECTORIES
 
 HERMES = r"C:\Users\ignsock\AppData\Local\hermes\hermes-agent\venv\Scripts\hermes.exe"
 prompt_template = """{objective}
 
 ---
 Your working directory is /workspace. Only files written there persist.
+{approved_directories}
 When finished:
 1. Write complete details to /workspace/result.md — ALWAYS, even if the task
    could not be completed. If you did not do the work, write why. Do this
@@ -18,6 +20,22 @@ When finished:
    no markdown, no file paths, no code, numbers spelled out plainly.
 """
 
+def _volume_env(read_only):
+    suffix = ":ro" if read_only else ""
+    return json.dumps([
+        f"{d['host']}:{d['container']}{suffix}"
+        for d in APPROVED_DIRECTORIES
+    ])
+
+def describe_approved_directories(risk):
+    if not APPROVED_DIRECTORIES: return ""
+    access = "You may only read from them" if risk == "read_only" else "You may both read and modify files in them"
+    lines = "\n".join(f"- {d['label']}: {d['container']}" for d in APPROVED_DIRECTORIES)
+    return f"""
+        You also have access to the following pre-approved directories. {access}
+        {lines}
+    """
+
 risk_profiles = {
     "read_only": {
         "TERMINAL_ENV": "docker",
@@ -25,20 +43,15 @@ risk_profiles = {
         "TERMINAL_DOCKER_NETWORK": "true",
         "TERMINAL_CONTAINER_PERSISTENT": "false",
         "TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES": "false",
+        "TERMINAL_DOCKER_VOLUMES": _volume_env(read_only=True),
     },
-    "reversible": {
+    "edit": {
         "TERMINAL_ENV": "docker",
         "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE": "true",
         "TERMINAL_DOCKER_NETWORK": "false",
         "TERMINAL_CONTAINER_PERSISTENT": "false",
         "TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES": "false",
-    },
-    "destructive": {
-        "TERMINAL_ENV": "docker",
-        "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE": "true",
-        "TERMINAL_DOCKER_NETWORK": "false",
-        "TERMINAL_CONTAINER_PERSISTENT": "false",
-        "TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES": "false",
+        "TERMINAL_DOCKER_VOLUMES": _volume_env(read_only=False),
     },
 }
 
@@ -52,7 +65,7 @@ class HermesResult:
 
 async def run_hermes(objective, workdir, risk, timeout_s=1800, profile=None):
     workdir = Path(workdir)
-    prompt = prompt_template.format(objective=objective)
+    prompt = prompt_template.format(objective=objective, approved_directories=describe_approved_directories(risk))
     usage_path = workdir / "usage.json"
 
     child_env = {
