@@ -54,6 +54,14 @@ class TaskStore:
             """,
             (time.time(), task_id))
             self.conn.commit()
+
+    def mark_delivered(self, task_id):
+        with self.lock:
+            self.conn.execute("""
+                UPDATE tasks SET delivered=1 WHERE id=?
+            """,
+            (task_id,))
+            self.conn.commit()
          
     def get(self, task_id):
         with self.lock:
@@ -62,3 +70,11 @@ class TaskStore:
                 SELECT * FROM tasks WHERE id=?
             """, 
             (task_id,)).fetchone()
+
+    def get_undelivered(self):
+        with self.lock:
+            self.conn.row_factory = sqlite3.Row
+            return self.conn.execute("""
+                SELECT * FROM tasks WHERE status IN ('success', 'failed') AND delivered = 0
+            """,
+            ()).fetchall()

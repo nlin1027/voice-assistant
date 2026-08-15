@@ -64,18 +64,22 @@ async def run_hermes_task(params, objective, task_type, risk):
         risk: Must be exactly one of "read_only", "reversible", or "destructive" —
             no other value is valid.
     """
+
     broker = params.app_resources
     task_id = await broker.create(objective, task_type, risk)
     await params.result_callback(
         {"status": "started", "task_id": task_id}, 
         properties=FunctionCallResultProperties(is_final=False)
     )
-    try:
-        row = await broker.run(task_id)
-    except Exception as e:
-        await params.result_callback({"status": "failed", "error": str(e)})
-        return
-    await params.result_callback({"status": row["status"], "summary": row["summary"]})
+
+    async def on_complete(row, error):
+        if error:
+            await params.result_callback({"status": "failed", "error": str(error)})
+        else:
+            await params.result_callback({"status": row["status"], "summary": row["summary"]})
+        broker.store.mark_delivered(task_id)
+
+    broker.dispatch(task_id, on_complete=on_complete)
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     """Run the voice bot for this session.
@@ -148,9 +152,24 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
 
     @worker.rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi):
-        # Kick off the conversation
+        finished_tasks = []
+        content = ""
+
+        for task in broker.store.get_undelivered():
+            finished_tasks.append((task["objective"], task["summary"]))
+            broker.store.mark_delivered(task["id"])
+
+        if finished_tasks:
+            summary_text = " ".join(f"One task ({objective}) finished: {summary}." for objective, summary in finished_tasks)
+            content = f"Start by concisely introducing yourself, then tell the user: {summary_text}"
+        else:
+            content = "Start by concisely introducing yourself."
+
         context.add_message(
-            {"role": "developer", "content": "Start by concisely introducing yourself."}
+            {
+                "role": "developer", 
+                "content": content
+            }
         )
         await worker.queue_frames([LLMRunFrame()])
 
