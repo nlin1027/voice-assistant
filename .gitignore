@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!bot/client/env.example
 *.pem
 *.key
 
@@ -33,6 +34,18 @@ ENV/
 .coverage
 htmlcov/
 
+# ─── Node.js (client/) ───────────────────────────────────────
+# bot/client/.gitignore already covers this within client/, but
+# repeat the important ones at the root as a safety net in case
+# node_modules ever gets created/run from somewhere else.
+node_modules/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
 # ─── Broker: task store ─────────────────────────────────────
 broker/tasks.db
 broker/tasks.db-journal
@@ -47,13 +60,9 @@ hermes-tasks/*
 !hermes-tasks/AGENTS.md
 !hermes-tasks/.gitkeep
 
-# ─── Pipecat eval artifacts ─────────────────────────────────
-*.eval.log
-*.debug.log
+# ─── Logs & eval run artifacts ───────────────────────────────
+*.log
 eval-runs/
-
-# ─── Debug artifacts ────────────────────────────────────────
-docker-events.log
 
 # ─── Editors / OS ───────────────────────────────────────────
 .vscode/
@@ -61,3 +70,9 @@ docker-events.log
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ─── Claude Code local state ─────────────────────────────────
+# .claude/launch.json is shared project config (dev server launch
+# entries) and is meant to be tracked. Only ignore personal/local
+# overrides, which don't exist yet but will land here if created.
+.claude/settings.local.json
