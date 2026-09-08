@@ -216,6 +216,31 @@ async def bot(runner_args: RunnerArguments):
 
 
 if __name__ == "__main__":
+    from pipecat.runner.run import app as fastapi_app
     from pipecat.runner.run import main
+
+    # Serve the built custom client (bot/client/dist, see bot/client/vite.config.ts) instead of
+    # Pipecat's default prebuilt UI. `app` is the shared FastAPI instance pipecat.runner.run.main()
+    # configures internally (mounting its own routes, including its own "/" redirect and "/client"
+    # prebuilt UI, only once main() runs) -- Starlette matches routes in registration order and
+    # returns on the first match, so registering ours here, before main() runs, makes ours win
+    # without touching pipecat's own routes (verified against starlette/routing.py). Mounting at
+    # "/app" rather than "/" avoids shadowing pipecat's own API routes (/start, /offer, /ws, ...),
+    # which are only registered once main() runs.
+    client_dist = REPO_ROOT / "bot" / "client" / "dist"
+    if client_dist.is_dir():
+        from fastapi.responses import RedirectResponse
+        from fastapi.staticfiles import StaticFiles
+
+        fastapi_app.mount("/app", StaticFiles(directory=str(client_dist), html=True), name="client")
+
+        @fastapi_app.get("/", include_in_schema=False)
+        async def _serve_custom_client():
+            return RedirectResponse(url="/app/")
+    else:
+        logger.warning(
+            f"Custom client build not found at {client_dist} -- run `npm run build` in "
+            "bot/client. Falling back to Pipecat's default UI at /client."
+        )
 
     main()
