@@ -116,7 +116,15 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAIResponsesHttpLLMService.Settings(
             model=os.getenv("OPENAI_MODEL", "gpt-4.1"),
-            system_instruction="You are a helpful assistant in a voice conversation. Your responses will be spoken aloud, so avoid emojis, bullet points, or other formatting that can't be spoken. Respond to what the user said in a creative, helpful, and brief way.",
+            system_instruction=(
+                "You are a helpful assistant in a voice conversation. Your responses will be "
+                "spoken aloud, so avoid emojis, bullet points, or other formatting that can't be "
+                "spoken. Respond to what the user said in a creative, helpful, and brief way.\n\n"
+                "For anything about the user's schedule (checking, adding, changing, or removing "
+                "an appointment/event), use run_hermes_task rather than answering from memory — "
+                "you have no direct knowledge of it. Use risk=\"read_only\" to look something up, "
+                "risk=\"edit\" to add or change something, and task_type=\"schedule\"."
+            ),
         ),
     )
     

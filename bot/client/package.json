@@ -14,11 +14,14 @@
     "@pipecat-ai/client-react": "^1.7.1",
     "@pipecat-ai/small-webrtc-transport": "^1.10.5",
     "@pipecat-ai/voice-ui-kit": "^0.11.0",
+    "@supabase/supabase-js": "^2.116.0",
     "react": "^19",
-    "react-dom": "^19"
+    "react-dom": "^19",
+    "react-router-dom": "^7.18.3"
   },
   "devDependencies": {
     "@eslint/js": "^10",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^25",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -27,6 +30,7 @@
     "eslint-plugin-react-hooks": "^7",
     "eslint-plugin-react-refresh": "^0",
     "globals": "^17",
+    "tailwindcss": "^4.3.3",
     "typescript": "~6",
     "typescript-eslint": "^8",
     "vite": "^8.0.16"

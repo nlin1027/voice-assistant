@@ -1,10 +1,14 @@
 import asyncio
 import json
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from .slots import SlotPool
 from .approved_paths import APPROVED_DIRECTORIES
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from modules.registry import volume_mounts as module_volume_mounts, describe_all as describe_modules
 
 HERMES = r"C:\Users\ignsock\AppData\Local\hermes\hermes-agent\venv\Scripts\hermes.exe"
 prompt_template = """{objective}
@@ -12,6 +16,7 @@ prompt_template = """{objective}
 ---
 Your working directory is /workspace. Only files written there persist.
 {approved_directories}
+{modules_description}
 When finished:
 1. Write complete details to /workspace/result.md — ALWAYS, even if the task
    could not be completed. If you did not do the work, write why. Do this
@@ -22,10 +27,13 @@ When finished:
 
 def _volume_env(read_only):
     suffix = ":ro" if read_only else ""
-    return json.dumps([
+    volumes = [
         f"{d['host']}:{d['container']}{suffix}"
         for d in APPROVED_DIRECTORIES
-    ])
+    ]
+    # Module CLIs are code, not data -- always mounted read-only regardless of risk.
+    volumes += [f"{host}:{container}:ro" for host, container in module_volume_mounts()]
+    return json.dumps(volumes)
 
 def describe_approved_directories(risk):
     if not APPROVED_DIRECTORIES: return ""
@@ -48,7 +56,9 @@ risk_profiles = {
     "edit": {
         "TERMINAL_ENV": "docker",
         "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE": "true",
-        "TERMINAL_DOCKER_NETWORK": "false",
+        # Network was off here for file-edit safety. Schedule (and future module) writes
+        # go over HTTPS to a cloud API, so edit-risk tasks need network -- see modules/registry.py.
+        "TERMINAL_DOCKER_NETWORK": "true",
         "TERMINAL_CONTAINER_PERSISTENT": "false",
         "TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES": "false",
         "TERMINAL_DOCKER_VOLUMES": _volume_env(read_only=False),
@@ -65,14 +75,21 @@ class HermesResult:
 
 async def run_hermes(objective, workdir, risk, timeout_s=1800, profile=None):
     workdir = Path(workdir)
-    prompt = prompt_template.format(objective=objective, approved_directories=describe_approved_directories(risk))
+    prompt = prompt_template.format(
+        objective=objective,
+        approved_directories=describe_approved_directories(risk),
+        modules_description=describe_modules(),
+    )
     usage_path = workdir / "usage.json"
 
     child_env = {
         **os.environ,
         "PYTHONUTF8": "1",
         "TERMINAL_CWD": str(workdir),
-        **risk_profiles[risk]
+        **risk_profiles[risk],
+        "MODULES_RISK": risk,
+        "SUPABASE_URL": os.environ.get("SUPABASE_URL", ""),
+        "SUPABASE_ANON_KEY": os.environ.get("SUPABASE_ANON_KEY", ""),
     }
     if profile:
         child_env["HERMES_HOME"] = str(SlotPool.home(profile))
