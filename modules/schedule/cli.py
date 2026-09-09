@@ -5,10 +5,18 @@ Talks directly to Supabase's REST API (PostgREST) over HTTPS. Reads
 SUPABASE_URL, SUPABASE_ANON_KEY, and MODULES_RISK from the environment --
 these are injected by broker/hermes.py, not passed as CLI args.
 
+All times are Eastern (America/New_York, EST/EDT as the date requires).
+Give --start/--end/--from/--to as a plain local wall-clock timestamp, e.g.
+2026-09-10T14:00:00 for 2pm Eastern -- no "Z" or offset needed. Any offset
+that is included is ignored and replaced with the correct Eastern one, so
+the schedule can never end up with a mix of timezones; the DST cutover is
+computed from the fixed U.S. rule (2nd Sunday in March / 1st Sunday in
+November) rather than the system's tzdata, which the sandbox may not have.
+
 Usage:
-    python3 cli.py list [--from ISO] [--to ISO]
-    python3 cli.py add --title TEXT --start ISO [--end ISO] [--notes TEXT]
-    python3 cli.py update ID [--title TEXT] [--start ISO] [--end ISO] [--notes TEXT]
+    python3 cli.py list [--from LOCAL_ISO] [--to LOCAL_ISO]
+    python3 cli.py add --title TEXT --start LOCAL_ISO [--end LOCAL_ISO] [--notes TEXT]
+    python3 cli.py update ID [--title TEXT] [--start LOCAL_ISO] [--end LOCAL_ISO] [--notes TEXT]
     python3 cli.py remove ID
 
 All commands print JSON to stdout on success. Errors go to stderr with a
@@ -19,11 +27,51 @@ was dispatched with a different risk, refuse rather than silently no-op.
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta
 
 WRITE_COMMANDS = {"add", "update", "remove"}
+
+_TZ_SUFFIX_RE = re.compile(r"(Z|[+-]\d{2}:?\d{2})$")
+
+
+def _nth_sunday(year, month, n):
+    first = datetime(year, month, 1)
+    days_to_sunday = (6 - first.weekday()) % 7
+    return first + timedelta(days=days_to_sunday, weeks=n - 1)
+
+
+def _eastern_utc_offset(naive_dt):
+    """UTC offset for US Eastern time at this naive local date, per the fixed
+    U.S. DST rule (2nd Sunday in March 2am - 1st Sunday in November 2am)."""
+    year = naive_dt.year
+    dst_start = _nth_sunday(year, 3, 2).replace(hour=2)
+    dst_end = _nth_sunday(year, 11, 1).replace(hour=2)
+    return timedelta(hours=-4) if dst_start <= naive_dt < dst_end else timedelta(hours=-5)
+
+
+def _eastern_iso(value):
+    """Reinterpret an ISO 8601 timestamp as Eastern local time and return it
+    with the correct EST/EDT offset attached. Any existing offset/Z suffix on
+    the input is stripped first, so the wall-clock digits are always taken as
+    Eastern regardless of what was appended -- times can't end up mixed."""
+    if value is None:
+        return None
+    naive = _TZ_SUFFIX_RE.sub("", value)
+    try:
+        naive_dt = datetime.fromisoformat(naive)
+    except ValueError:
+        print(f"error: could not parse '{value}' as an ISO 8601 timestamp", file=sys.stderr)
+        sys.exit(1)
+    offset = _eastern_utc_offset(naive_dt)
+    total_minutes = int(offset.total_seconds() // 60)
+    sign = "-" if total_minutes < 0 else "+"
+    total_minutes = abs(total_minutes)
+    offset_str = f"{sign}{total_minutes // 60:02d}:{total_minutes % 60:02d}"
+    return naive_dt.isoformat() + offset_str
 
 
 def _env(name):
@@ -64,17 +112,17 @@ def _request(method, path, body=None):
 def cmd_list(args):
     path = "schedule_events?select=*&order=starts_at.asc"
     if args.from_:
-        path += f"&starts_at=gte.{args.from_}"
+        path += f"&starts_at=gte.{_eastern_iso(args.from_)}"
     if args.to:
-        path += f"&starts_at=lte.{args.to}"
+        path += f"&starts_at=lte.{_eastern_iso(args.to)}"
     print(json.dumps(_request("GET", path), indent=2))
 
 
 def cmd_add(args):
     body = [{
         "title": args.title,
-        "starts_at": args.start,
-        "ends_at": args.end,
+        "starts_at": _eastern_iso(args.start),
+        "ends_at": _eastern_iso(args.end),
         "notes": args.notes,
         "source": "agent",
     }]
@@ -86,9 +134,9 @@ def cmd_update(args):
     if args.title is not None:
         fields["title"] = args.title
     if args.start is not None:
-        fields["starts_at"] = args.start
+        fields["starts_at"] = _eastern_iso(args.start)
     if args.end is not None:
-        fields["ends_at"] = args.end
+        fields["ends_at"] = _eastern_iso(args.end)
     if args.notes is not None:
         fields["notes"] = args.notes
     if not fields:
@@ -106,22 +154,22 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_list = sub.add_parser("list", help="List schedule entries, soonest first")
-    p_list.add_argument("--from", dest="from_", help="ISO 8601, only entries starting at/after this")
-    p_list.add_argument("--to", help="ISO 8601, only entries starting at/before this")
+    p_list.add_argument("--from", dest="from_", help="Eastern local time, e.g. 2026-09-10T00:00:00")
+    p_list.add_argument("--to", help="Eastern local time, only entries starting at/before this")
     p_list.set_defaults(func=cmd_list)
 
     p_add = sub.add_parser("add", help="Add a schedule entry")
     p_add.add_argument("--title", required=True)
-    p_add.add_argument("--start", required=True, help="ISO 8601 start time, e.g. 2026-09-10T14:00:00Z")
-    p_add.add_argument("--end", help="ISO 8601 end time")
+    p_add.add_argument("--start", required=True, help="Eastern local start time, e.g. 2026-09-10T14:00:00")
+    p_add.add_argument("--end", help="Eastern local end time")
     p_add.add_argument("--notes")
     p_add.set_defaults(func=cmd_add)
 
     p_update = sub.add_parser("update", help="Update a schedule entry by id")
     p_update.add_argument("id")
     p_update.add_argument("--title")
-    p_update.add_argument("--start")
-    p_update.add_argument("--end")
+    p_update.add_argument("--start", help="Eastern local start time")
+    p_update.add_argument("--end", help="Eastern local end time")
     p_update.add_argument("--notes")
     p_update.set_defaults(func=cmd_update)
 

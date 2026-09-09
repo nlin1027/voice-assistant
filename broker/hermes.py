@@ -44,6 +44,12 @@ def describe_approved_directories(risk):
         {lines}
     """
 
+# Custom env vars the module CLIs need *inside the container*. Being present in the env
+# passed to the hermes.exe subprocess is not enough -- Hermes only forwards names explicitly
+# listed here (TERMINAL_DOCKER_FORWARD_ENV, a JSON array of names) into the container itself;
+# everything else stays host-side only. Confirmed in Hermes' own docker.py/terminal_tool.py.
+MODULE_FORWARD_ENV = json.dumps(["SUPABASE_URL", "SUPABASE_ANON_KEY", "MODULES_RISK"])
+
 risk_profiles = {
     "read_only": {
         "TERMINAL_ENV": "docker",
@@ -52,6 +58,7 @@ risk_profiles = {
         "TERMINAL_CONTAINER_PERSISTENT": "false",
         "TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES": "false",
         "TERMINAL_DOCKER_VOLUMES": _volume_env(read_only=True),
+        "TERMINAL_DOCKER_FORWARD_ENV": MODULE_FORWARD_ENV,
     },
     "edit": {
         "TERMINAL_ENV": "docker",
@@ -62,6 +69,7 @@ risk_profiles = {
         "TERMINAL_CONTAINER_PERSISTENT": "false",
         "TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES": "false",
         "TERMINAL_DOCKER_VOLUMES": _volume_env(read_only=False),
+        "TERMINAL_DOCKER_FORWARD_ENV": MODULE_FORWARD_ENV,
     },
 }
 

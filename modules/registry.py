@@ -22,7 +22,9 @@ MODULES = [
             "  add --title T --start ISO [--end ISO] [--notes T]   Add an entry.\n"
             "  update ID [--title T] [--start ISO] [--end ISO] [--notes T]   Update an entry.\n"
             "  remove ID   Remove an entry.\n"
-            "  list works on any task. add/update/remove require this task's risk to be "
+            "  All times are Eastern (America/New_York). Give ISO timestamps as plain local "
+            "wall-clock time, e.g. 2026-09-10T14:00:00 for 2pm Eastern -- no \"Z\" or UTC offset. "
+            "list works on any task. add/update/remove require this task's risk to be "
             "\"edit\" -- the CLI itself refuses them otherwise."
         ),
     },

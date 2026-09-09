@@ -1,6 +1,12 @@
+/* The kit's precompiled bundle is imported first so our own Tailwind utilities (below) land
+   later in the shared "utilities" cascade layer — required for any responsive/state variant
+   of ours (e.g. lg:flex-row) to win over a same-named unconditional class the kit's own build
+   also happens to generate (e.g. flex-col), instead of losing to it regardless of breakpoint. */
+@import '@pipecat-ai/voice-ui-kit/styles';
+
 @import 'tailwindcss';
 
-/* Bridges the kit's runtime CSS variables (defined in voice-ui-kit.css below, with light/dark
+/* Bridges the kit's runtime CSS variables (defined in voice-ui-kit.css above, with light/dark
    values) into Tailwind's theme, so our own components can use bg-background, text-foreground,
    etc. and get real generated utilities instead of dead class names. "inline" keeps these as
    live var() references rather than baking in a value at build time, so light/dark still works. */
@@ -25,5 +31,3 @@
   --color-input: var(--color-input);
   --color-ring: var(--color-ring);
 }
-
-@import '@pipecat-ai/voice-ui-kit/styles';
