@@ -1,9 +1,16 @@
 """Schedule module CLI. Stdlib-only so it runs unmodified in Hermes' sandboxed
 container (python3.11, no pip install step at task time).
 
-Talks directly to Supabase's REST API (PostgREST) over HTTPS. Reads
-SUPABASE_URL, SUPABASE_ANON_KEY, and MODULES_RISK from the environment --
-these are injected by broker/hermes.py, not passed as CLI args.
+Talks directly to Supabase's REST API (PostgREST) over HTTPS. SUPABASE_URL and
+SUPABASE_ANON_KEY are read from a .env file sitting next to this script (see
+_load_local_env()) -- that file rides along with this module's existing
+read-only bind mount, so it's always present inside the container regardless
+of risk. This was previously read from the environment, injected by
+broker/hermes.py via Hermes' TERMINAL_DOCKER_FORWARD_ENV -- that forwarding
+step turned out to be unreliable (intermittently absent inside the container
+for no config-side reason), so the environment is now only a fallback for
+local/host testing. MODULES_RISK is still environment-only -- it's set fresh
+per task by broker/hermes.py, not a static credential a file would help with.
 
 All times are Eastern (America/New_York, EST/EDT as the date requires).
 Give --start/--end/--from/--to as a plain local wall-clock timestamp, e.g.
@@ -32,10 +39,32 @@ import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
+from pathlib import Path
 
 WRITE_COMMANDS = {"add", "update", "remove"}
 
 _TZ_SUFFIX_RE = re.compile(r"(Z|[+-]\d{2}:?\d{2})$")
+
+
+def _load_local_env():
+    """Parse the .env file next to this script, if present. Deliberately not
+    python-dotenv -- this must run with zero pip installs inside Hermes'
+    sandbox, so it's a minimal KEY=VALUE parser, good enough for this file's
+    two flat values."""
+    path = Path(__file__).resolve().parent / ".env"
+    values = {}
+    if not path.is_file():
+        return values
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip()
+    return values
+
+
+_LOCAL_ENV = _load_local_env()
 
 
 def _nth_sunday(year, month, n):
@@ -75,9 +104,15 @@ def _eastern_iso(value):
 
 
 def _env(name):
-    value = os.environ.get(name)
+    # The .env file next to this script is checked first -- it's reliably present
+    # (bind-mounted alongside this code), unlike the environment, which depends on
+    # Hermes forwarding it into the container correctly on every single task.
+    value = _LOCAL_ENV.get(name) or os.environ.get(name)
     if not value:
-        print(f"error: {name} is not set in this task's environment", file=sys.stderr)
+        print(
+            f"error: {name} is not set (checked modules/schedule/.env and this task's environment)",
+            file=sys.stderr,
+        )
         sys.exit(1)
     return value
 
