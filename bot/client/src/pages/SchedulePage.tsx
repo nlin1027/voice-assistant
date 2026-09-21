@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 
 import { supabase } from '../lib/supabase';
-import { addMonths, getMonthGrid, isSameDay, toDateKey } from '../lib/calendarDate';
+import { addMonths, getMonthGrid, getWeekStart, isSameDay, toDateKey } from '../lib/calendarDate';
 
 interface ScheduleEvent {
   id: string;
@@ -9,6 +9,13 @@ interface ScheduleEvent {
   starts_at: string;
   ends_at: string | null;
   notes: string | null;
+  source: 'manual' | 'agent';
+}
+
+interface ScheduleNote {
+  scope: 'day' | 'week';
+  scope_date: string;
+  content: string;
   source: 'manual' | 'agent';
 }
 
@@ -23,6 +30,94 @@ const formatWhen = (starts_at: string, ends_at: string | null) => {
   return `${startText} – ${formatTime(ends_at)}`;
 };
 
+const formatWeekRange = (weekStart: Date) => {
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+  const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+  return `${weekStart.toLocaleDateString(undefined, opts)} – ${weekEnd.toLocaleDateString(undefined, opts)}`;
+};
+
+interface NoteBlockProps {
+  label: string;
+  note: ScheduleNote | undefined;
+  draft: string;
+  editing: boolean;
+  saving: boolean;
+  onDraftChange: (value: string) => void;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSave: () => void;
+  onClear: () => void;
+}
+
+const NoteBlock = ({
+  label,
+  note,
+  draft,
+  editing,
+  saving,
+  onDraftChange,
+  onEdit,
+  onCancel,
+  onSave,
+  onClear,
+}: NoteBlockProps) => (
+  <div className="bg-card border border-border rounded-md px-3 py-2.5">
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-xs font-semibold text-foreground">{label}</span>
+      {note?.source === 'agent' && (
+        <span className="text-[10px] uppercase tracking-wide text-amber-600 dark:text-amber-400 shrink-0">
+          added by agent
+        </span>
+      )}
+    </div>
+
+    {editing || !note ? (
+      <div className="flex flex-col gap-1.5 mt-1.5">
+        <textarea
+          value={draft}
+          onChange={(e) => onDraftChange(e.target.value)}
+          placeholder={`Add a note for this ${label.toLowerCase().includes('week') ? 'week' : 'day'}…`}
+          rows={2}
+          className="bg-background border border-border rounded-md px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground resize-none"
+        />
+        <div className="flex gap-1.5 justify-end">
+          {editing && (
+            <button
+              onClick={onCancel}
+              className="text-xs font-medium px-2.5 py-1 rounded-md text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Cancel
+            </button>
+          )}
+          <button
+            onClick={onSave}
+            disabled={saving || !draft.trim()}
+            className="bg-primary text-primary-foreground rounded-md px-2.5 py-1 text-xs font-medium disabled:opacity-50"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    ) : (
+      <div className="mt-1 flex items-start justify-between gap-2">
+        <p className="text-xs text-muted-foreground whitespace-pre-wrap">{note.content}</p>
+        <div className="flex gap-2 shrink-0">
+          <button onClick={onEdit} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+            Edit
+          </button>
+          <button
+            onClick={onClear}
+            className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+    )}
+  </div>
+);
+
 export const SchedulePage = () => {
   const [events, setEvents] = useState<ScheduleEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,6 +130,13 @@ export const SchedulePage = () => {
   const [time, setTime] = useState('09:00');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  const [scheduleNotes, setScheduleNotes] = useState<ScheduleNote[]>([]);
+  const [dayNoteDraft, setDayNoteDraft] = useState('');
+  const [weekNoteDraft, setWeekNoteDraft] = useState('');
+  const [editingDayNote, setEditingDayNote] = useState(false);
+  const [editingWeekNote, setEditingWeekNote] = useState(false);
+  const [savingNote, setSavingNote] = useState(false);
 
   const load = async () => {
     if (!supabase) {
@@ -50,8 +152,16 @@ export const SchedulePage = () => {
     setLoading(false);
   };
 
+  const loadNotes = async () => {
+    if (!supabase) return;
+    const { data, error } = await supabase.from('schedule_notes').select('*');
+    if (error) setError(error.message);
+    else setScheduleNotes(data as ScheduleNote[]);
+  };
+
   useEffect(() => {
     load();
+    loadNotes();
     const client = supabase;
     if (!client) return;
 
@@ -59,6 +169,7 @@ export const SchedulePage = () => {
     const channel = client
       .channel('schedule_events_changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_events' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_notes' }, loadNotes)
       .subscribe();
 
     return () => {
@@ -83,6 +194,46 @@ export const SchedulePage = () => {
 
   const selectedDayEvents = eventsByDay.get(toDateKey(selectedDate)) ?? [];
   const today = new Date();
+
+  const selectedWeekStart = useMemo(() => getWeekStart(selectedDate), [selectedDate]);
+  const dayKey = toDateKey(selectedDate);
+  const weekKey = toDateKey(selectedWeekStart);
+  const selectedDayNote = scheduleNotes.find((n) => n.scope === 'day' && n.scope_date === dayKey);
+  const selectedWeekNote = scheduleNotes.find((n) => n.scope === 'week' && n.scope_date === weekKey);
+
+  // Re-sync the draft only when the selected day changes, not on every notes refresh --
+  // otherwise a realtime update (e.g. Hermes editing the other note) would blow away
+  // whatever the user is mid-typing here.
+  useEffect(() => {
+    setDayNoteDraft(selectedDayNote?.content ?? '');
+    setEditingDayNote(false);
+  }, [dayKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setWeekNoteDraft(selectedWeekNote?.content ?? '');
+    setEditingWeekNote(false);
+  }, [weekKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSaveNote = async (scope: 'day' | 'week', scopeDate: string, text: string) => {
+    if (!supabase || !text.trim()) return;
+    setSavingNote(true);
+    const { error } = await supabase
+      .from('schedule_notes')
+      .upsert({ scope, scope_date: scopeDate, content: text.trim(), source: 'manual' }, { onConflict: 'scope,scope_date' });
+    setSavingNote(false);
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    if (scope === 'day') setEditingDayNote(false);
+    else setEditingWeekNote(false);
+  };
+
+  const handleClearNote = async (scope: 'day' | 'week', scopeDate: string) => {
+    if (!supabase) return;
+    const { error } = await supabase.from('schedule_notes').delete().eq('scope', scope).eq('scope_date', scopeDate);
+    if (error) setError(error.message);
+  };
 
   const handleSelectDay = (day: Date) => {
     setSelectedDate(day);
@@ -253,6 +404,39 @@ export const SchedulePage = () => {
                 ? 'Nothing scheduled'
                 : `${selectedDayEvents.length} event${selectedDayEvents.length === 1 ? '' : 's'}`}
           </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <NoteBlock
+            label={`Note for ${selectedDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`}
+            note={selectedDayNote}
+            draft={dayNoteDraft}
+            editing={editingDayNote}
+            saving={savingNote}
+            onDraftChange={setDayNoteDraft}
+            onEdit={() => setEditingDayNote(true)}
+            onCancel={() => {
+              setEditingDayNote(false);
+              setDayNoteDraft(selectedDayNote?.content ?? '');
+            }}
+            onSave={() => handleSaveNote('day', dayKey, dayNoteDraft)}
+            onClear={() => handleClearNote('day', dayKey)}
+          />
+          <NoteBlock
+            label={`Note for week of ${formatWeekRange(selectedWeekStart)}`}
+            note={selectedWeekNote}
+            draft={weekNoteDraft}
+            editing={editingWeekNote}
+            saving={savingNote}
+            onDraftChange={setWeekNoteDraft}
+            onEdit={() => setEditingWeekNote(true)}
+            onCancel={() => {
+              setEditingWeekNote(false);
+              setWeekNoteDraft(selectedWeekNote?.content ?? '');
+            }}
+            onSave={() => handleSaveNote('week', weekKey, weekNoteDraft)}
+            onClear={() => handleClearNote('week', weekKey)}
+          />
         </div>
 
         {selectedDayEvents.length > 0 && (

@@ -22,3 +22,25 @@ create policy "anon full access" on schedule_events
   to anon
   using (true)
   with check (true);
+
+-- One freeform note per day or per week. scope_date is a plain date (no time-of-day, no
+-- timezone conversion needed) — for scope='day' it's the day itself; for scope='week' it's
+-- the Sunday that starts that week, matching the client calendar's Sunday-start weeks. The
+-- composite primary key makes "the note for this day/week" a natural upsert target (one row
+-- per period) instead of needing lookup-by-id like schedule_events.
+create table if not exists schedule_notes (
+  scope       text not null check (scope in ('day', 'week')),
+  scope_date  date not null,
+  content     text not null,
+  source      text not null default 'manual' check (source in ('manual', 'agent')),
+  updated_at  timestamptz not null default now(),
+  primary key (scope, scope_date)
+);
+
+alter table schedule_notes enable row level security;
+
+create policy "anon full access" on schedule_notes
+  for all
+  to anon
+  using (true)
+  with check (true);

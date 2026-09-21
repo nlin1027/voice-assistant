@@ -10,6 +10,7 @@ import { ErrorCard, PipecatAppBase, SpinLoader } from '@pipecat-ai/voice-ui-kit'
 import { Nav } from './components/Nav';
 import { VoicePage } from './pages/VoicePage';
 import { SchedulePage } from './pages/SchedulePage';
+import { ChatPage } from './pages/ChatPage';
 import { DEFAULT_TRANSPORT, TRANSPORT_PROPS } from './config';
 import './index.css';
 
@@ -40,6 +41,7 @@ export const Main = () => (
           <Routes>
             <Route path="/" element={<VoiceRoute />} />
             <Route path="/schedule" element={<SchedulePage />} />
+            <Route path="/chat" element={<ChatPage />} />
           </Routes>
         </main>
       </BrowserRouter>

@@ -25,10 +25,22 @@ Usage:
     python3 cli.py add --title TEXT --start LOCAL_ISO [--end LOCAL_ISO] [--notes TEXT]
     python3 cli.py update ID [--title TEXT] [--start LOCAL_ISO] [--end LOCAL_ISO] [--notes TEXT]
     python3 cli.py remove ID
+    python3 cli.py note-set --scope {day,week} --date LOCAL_DATE --text TEXT
+    python3 cli.py note-get --scope {day,week} --date LOCAL_DATE
+    python3 cli.py note-clear --scope {day,week} --date LOCAL_DATE
+
+note-set/note-get/note-clear operate on a single freeform note attached to a
+whole day or a whole week (separate from a specific event's own --notes).
+--date is a plain date, e.g. 2026-09-10 (a full timestamp is also accepted --
+only its date part is used). For --scope week, --date can be any day in that
+week; it's normalized down to that week's Sunday, since notes are stored one
+per period. note-set is an upsert -- calling it again for the same
+scope+date replaces that note's text rather than creating a duplicate.
 
 All commands print JSON to stdout on success. Errors go to stderr with a
-non-zero exit code. add/update/remove require MODULES_RISK=edit -- this task
-was dispatched with a different risk, refuse rather than silently no-op.
+non-zero exit code. add/update/remove/note-set/note-clear require
+MODULES_RISK=edit -- this task was dispatched with a different risk, refuse
+rather than silently no-op.
 """
 
 import argparse
@@ -38,10 +50,10 @@ import re
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-WRITE_COMMANDS = {"add", "update", "remove"}
+WRITE_COMMANDS = {"add", "update", "remove", "note-set", "note-clear"}
 
 _TZ_SUFFIX_RE = re.compile(r"(Z|[+-]\d{2}:?\d{2})$")
 
@@ -103,6 +115,28 @@ def _eastern_iso(value):
     return naive_dt.isoformat() + offset_str
 
 
+def _parse_date(value):
+    """Parse a plain date, e.g. 2026-09-10. A full timestamp is accepted too --
+    only the date part before any 'T' is used, since notes have no time-of-day."""
+    date_part = value.split("T")[0]
+    try:
+        return date.fromisoformat(date_part)
+    except ValueError:
+        print(f"error: could not parse '{value}' as a date (expected YYYY-MM-DD)", file=sys.stderr)
+        sys.exit(1)
+
+
+def _week_start(day):
+    """The Sunday on/before `day`, matching the client calendar's Sunday-start weeks."""
+    days_since_sunday = (day.weekday() + 1) % 7
+    return day - timedelta(days=days_since_sunday)
+
+
+def _scope_date(scope, value):
+    day = _parse_date(value)
+    return _week_start(day) if scope == "week" else day
+
+
 def _env(name):
     # The .env file next to this script is checked first -- it's reliably present
     # (bind-mounted alongside this code), unlike the environment, which depends on
@@ -117,7 +151,7 @@ def _env(name):
     return value
 
 
-def _request(method, path, body=None):
+def _request(method, path, body=None, prefer=None):
     url = _env("SUPABASE_URL").rstrip("/") + "/rest/v1/" + path
     key = _env("SUPABASE_ANON_KEY")
     headers = {
@@ -127,6 +161,9 @@ def _request(method, path, body=None):
     }
     if method in ("POST", "PATCH"):
         headers["Prefer"] = "return=representation"
+    if prefer:
+        existing = headers.get("Prefer")
+        headers["Prefer"] = f"{prefer},{existing}" if existing else prefer
 
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
@@ -184,6 +221,31 @@ def cmd_remove(args):
     print(json.dumps(_request("DELETE", f"schedule_events?id=eq.{args.id}"), indent=2))
 
 
+def cmd_note_set(args):
+    scope_date = _scope_date(args.scope, args.date)
+    body = [{
+        "scope": args.scope,
+        "scope_date": scope_date.isoformat(),
+        "content": args.text,
+        "source": "agent",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }]
+    path = "schedule_notes?on_conflict=scope,scope_date"
+    print(json.dumps(_request("POST", path, body, prefer="resolution=merge-duplicates"), indent=2))
+
+
+def cmd_note_get(args):
+    scope_date = _scope_date(args.scope, args.date)
+    path = f"schedule_notes?scope=eq.{args.scope}&scope_date=eq.{scope_date.isoformat()}&select=*"
+    print(json.dumps(_request("GET", path), indent=2))
+
+
+def cmd_note_clear(args):
+    scope_date = _scope_date(args.scope, args.date)
+    path = f"schedule_notes?scope=eq.{args.scope}&scope_date=eq.{scope_date.isoformat()}"
+    print(json.dumps(_request("DELETE", path), indent=2))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Schedule module CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -211,6 +273,22 @@ def main():
     p_remove = sub.add_parser("remove", help="Remove a schedule entry by id")
     p_remove.add_argument("id")
     p_remove.set_defaults(func=cmd_remove)
+
+    p_note_set = sub.add_parser("note-set", help="Add or update the note for a day/week (upsert)")
+    p_note_set.add_argument("--scope", required=True, choices=["day", "week"])
+    p_note_set.add_argument("--date", required=True, help="Date in scope, e.g. 2026-09-10 (week normalizes to its Sunday)")
+    p_note_set.add_argument("--text", required=True)
+    p_note_set.set_defaults(func=cmd_note_set)
+
+    p_note_get = sub.add_parser("note-get", help="Get the note for a day/week, if any")
+    p_note_get.add_argument("--scope", required=True, choices=["day", "week"])
+    p_note_get.add_argument("--date", required=True)
+    p_note_get.set_defaults(func=cmd_note_get)
+
+    p_note_clear = sub.add_parser("note-clear", help="Remove the note for a day/week")
+    p_note_clear.add_argument("--scope", required=True, choices=["day", "week"])
+    p_note_clear.add_argument("--date", required=True)
+    p_note_clear.set_defaults(func=cmd_note_clear)
 
     args = parser.parse_args()
 

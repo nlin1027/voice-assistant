@@ -13,5 +13,8 @@ export const Nav = () => (
     <NavLink to="/schedule" className={linkClass}>
       Schedule
     </NavLink>
+    <NavLink to="/chat" className={linkClass}>
+      Chat
+    </NavLink>
   </nav>
 );

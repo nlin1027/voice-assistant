@@ -17,6 +17,14 @@ export const addMonths = (date: Date, delta: number) => {
   return d;
 };
 
+// The Sunday on/before `date`, matching the grid's Sunday-start weeks. Mirrors
+// modules/schedule/cli.py's _week_start so a day always maps to the same week note.
+export const getWeekStart = (date: Date) => {
+  const d = new Date(date);
+  d.setDate(d.getDate() - d.getDay());
+  return d;
+};
+
 // Always 42 cells (6 full weeks) so the grid height doesn't jump between months.
 export const getMonthGrid = (year: number, month: number): Date[] => {
   const firstOfMonth = new Date(year, month, 1);

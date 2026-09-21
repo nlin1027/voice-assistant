@@ -54,6 +54,11 @@ sys.path.insert(0, str(REPO_ROOT))
 from broker.broker import TaskBroker
 broker = TaskBroker(root=REPO_ROOT / "hermes-tasks", db_path=REPO_ROOT / "broker" / "tasks.db")
 
+from agent_common import OPENAI_MODEL, HERMES_DELEGATION_INSTRUCTIONS, dispatch_hermes_task
+from chat_store import ChatStore
+from chat import handle_chat_message, clear_chat, sweep_finished_tasks
+chat_store = ChatStore(REPO_ROOT / "broker" / "tasks.db")
+
 @tool_options(cancel_on_interruption=False)
 async def run_hermes_task(params, objective, task_type, risk):
     """Dispatch a background Hermes task.
@@ -66,11 +71,6 @@ async def run_hermes_task(params, objective, task_type, risk):
     """
 
     broker = params.app_resources
-    task_id = await broker.create(objective, task_type, risk)
-    await params.result_callback(
-        {"status": "started", "task_id": task_id}, 
-        properties=FunctionCallResultProperties(is_final=False)
-    )
 
     async def on_complete(row, error):
         if error:
@@ -79,7 +79,11 @@ async def run_hermes_task(params, objective, task_type, risk):
             await params.result_callback({"status": row["status"], "summary": row["summary"]})
         broker.store.mark_delivered(task_id)
 
-    broker.dispatch(task_id, on_complete=on_complete)
+    task_id = await dispatch_hermes_task(broker, objective, task_type, risk, on_complete=on_complete)
+    await params.result_callback(
+        {"status": "started", "task_id": task_id},
+        properties=FunctionCallResultProperties(is_final=False)
+    )
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     """Run the voice bot for this session.
@@ -115,15 +119,12 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     llm = OpenAIResponsesHttpLLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
         settings=OpenAIResponsesHttpLLMService.Settings(
-            model=os.getenv("OPENAI_MODEL", "gpt-4.1"),
+            model=OPENAI_MODEL,
             system_instruction=(
                 "You are a helpful assistant in a voice conversation. Your responses will be "
                 "spoken aloud, so avoid emojis, bullet points, or other formatting that can't be "
                 "spoken. Respond to what the user said in a creative, helpful, and brief way.\n\n"
-                "For anything about the user's schedule (checking, adding, changing, or removing "
-                "an appointment/event), use run_hermes_task rather than answering from memory — "
-                "you have no direct knowledge of it. Use risk=\"read_only\" to look something up, "
-                "risk=\"edit\" to add or change something, and task_type=\"schedule\"."
+                + HERMES_DELEGATION_INSTRUCTIONS
             ),
         ),
     )
@@ -242,5 +243,29 @@ if __name__ == "__main__":
             f"Custom client build not found at {client_dist} -- run `npm run build` in "
             "bot/client. Falling back to Pipecat's default UI at /client."
         )
+
+    # Text-chat API (bot/client's Chat tab) -- same agent as voice (see chat.py), reachable
+    # regardless of whether the client build above exists, so it's testable with curl alone.
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+
+    @fastapi_app.get("/api/chat/messages", include_in_schema=False)
+    async def _get_chat_messages():
+        sweep_finished_tasks(broker, chat_store)
+        return JSONResponse(chat_store.get_all())
+
+    @fastapi_app.post("/api/chat/messages", include_in_schema=False)
+    async def _post_chat_message(request: Request):
+        body = await request.json()
+        message = (body.get("message") or "").strip()
+        if not message:
+            return JSONResponse({"error": "message is required"}, status_code=400)
+        messages = await handle_chat_message(broker, chat_store, message)
+        return JSONResponse(messages)
+
+    @fastapi_app.post("/api/chat/clear", include_in_schema=False)
+    async def _clear_chat():
+        await clear_chat(chat_store)
+        return JSONResponse({"ok": True})
 
     main()
